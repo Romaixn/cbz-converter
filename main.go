@@ -137,6 +137,14 @@ func zipFiles(filename string, baseDir string) error {
 	return err
 }
 
+func extractAndRenameArchive(archivePath, extractDir string) error {
+	if strings.HasSuffix(strings.ToLower(archivePath), ".cbr") {
+		return extractAndRenameCBR(archivePath, extractDir)
+	} else {
+		return extractAndRenameCBZ(archivePath, extractDir)
+	}
+}
+
 func extractAndRenameCBR(cbrPath, extractDir string) error {
 	tempDir, err := os.MkdirTemp("", "cbr_extract")
 	if err != nil {
@@ -153,8 +161,24 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 		return fmt.Errorf("failed to rename files: %w", err)
 	}
 
+	if err := os.MkdirAll(extractDir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create extract directory: %w", err)
+	}
+
 	if err := copyDir(tempDir, extractDir); err != nil {
 		return fmt.Errorf("failed to copy renamed files: %w", err)
+	}
+
+	return nil
+}
+
+func extractAndRenameCBZ(cbzPath, extractDir string) error {
+	if err := unzipCBZ(cbzPath, extractDir); err != nil {
+		return fmt.Errorf("failed to extract CBZ file: %w", err)
+	}
+
+	if err := renameFilesWithLeadingZeros(extractDir); err != nil {
+		return fmt.Errorf("failed to rename files: %w", err)
 	}
 
 	return nil
@@ -209,40 +233,46 @@ func main() {
 		ext := strings.ToLower(filepath.Ext(file.Name()))
 		if ext == ".cbz" || ext == ".cbr" {
 			filePath := filepath.Join(dir, file.Name())
-			extractDir := filepath.Join(dir, file.Name()+"_extracted")
+			extractDir := filepath.Join(dir, strings.TrimSuffix(file.Name(), ext)+"_extracted")
 			newCBZPath := filepath.Join(dir, strings.TrimSuffix(file.Name(), ext)+".cbz")
 
+			fmt.Printf("Processing %s...\n", filePath)
+
+			// Extract and rename for both CBR and CBZ
+			if err := extractAndRenameArchive(filePath, extractDir); err != nil {
+				fmt.Printf("failed to extract and rename %s: %v\n", filePath, err)
+				continue
+			}
+
 			if ext == ".cbr" {
-				fmt.Printf("Extracting and renaming %s...\n", filePath)
-				if err := extractAndRenameCBR(filePath, extractDir); err != nil {
-					fmt.Printf("failed to extract and rename %s: %v\n", filePath, err)
+				fmt.Printf("Compressing files into %s...\n", newCBZPath)
+				if err := zipFiles(newCBZPath, extractDir); err != nil {
+					fmt.Printf("failed to zip files into %s: %v\n", newCBZPath, err)
 					continue
 				}
+
+				fmt.Printf("Removing original CBR file...\n")
+				if err := os.Remove(filePath); err != nil {
+					fmt.Printf("failed to remove original CBR file %s: %v\n", filePath, err)
+				}
+
+				fmt.Printf("Successfully converted %s to %s\n", filePath, newCBZPath)
 			} else {
-				fmt.Printf("Extracting %s...\n", filePath)
-				if err := unzipCBZ(filePath, extractDir); err != nil {
-					fmt.Printf("failed to unzip %s: %v\n", filePath, err)
+				// For CBZ, we just need to update the original file
+				fmt.Printf("Updating original CBZ file %s...\n", filePath)
+				if err := os.Remove(filePath); err != nil {
+					fmt.Printf("failed to remove original CBZ file %s: %v\n", filePath, err)
 					continue
 				}
-			}
-
-			fmt.Printf("Renaming files in %s...\n", extractDir)
-			if err := renameFilesWithLeadingZeros(extractDir); err != nil {
-				fmt.Printf("failed to rename files in %s: %v\n", extractDir, err)
-				continue
-			}
-
-			fmt.Printf("Compressing files into %s...\n", newCBZPath)
-			if err := zipFiles(newCBZPath, extractDir); err != nil {
-				fmt.Printf("failed to zip files into %s: %v\n", newCBZPath, err)
-				continue
+				if err := zipFiles(filePath, extractDir); err != nil {
+					fmt.Printf("failed to update CBZ file %s: %v\n", filePath, err)
+					continue
+				}
+				fmt.Printf("Successfully updated %s\n", filePath)
 			}
 
 			fmt.Printf("Cleaning up temporary files...\n")
 			os.RemoveAll(extractDir)
-			os.Remove(filePath)
-
-			fmt.Printf("Successfully converted %s to %s\n", filePath, newCBZPath)
 		}
 	}
 }
