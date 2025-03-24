@@ -13,8 +13,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/fatih/color"
+	"github.com/schollz/progressbar/v3"
 )
 
+// unzipCBZ extracts a CBZ file to a destination directory
 func unzipCBZ(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -54,6 +58,7 @@ func unzipCBZ(src, dest string) error {
 	return nil
 }
 
+// renameFilesWithLeadingZeros adds leading zeros to numeric parts of filenames
 func renameFilesWithLeadingZeros(dir string) error {
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -86,7 +91,6 @@ func renameFilesWithLeadingZeros(dir string) error {
 			if err := os.Rename(oldPath, newPath); err != nil {
 				return err
 			}
-			fmt.Printf("Renamed: %s -> %s\n", oldPath, newPath)
 		}
 
 		return nil
@@ -95,6 +99,7 @@ func renameFilesWithLeadingZeros(dir string) error {
 	return err
 }
 
+// zipFiles compresses files from a directory into a zip file
 func zipFiles(filename string, baseDir string) error {
 	newZipFile, err := os.Create(filename)
 	if err != nil {
@@ -139,6 +144,7 @@ func zipFiles(filename string, baseDir string) error {
 	return err
 }
 
+// extractAndRenameArchive handles both CBR and CBZ archives
 func extractAndRenameArchive(archivePath, extractDir string) error {
 	if strings.HasSuffix(strings.ToLower(archivePath), ".cbr") {
 		return extractAndRenameCBR(archivePath, extractDir)
@@ -147,6 +153,7 @@ func extractAndRenameArchive(archivePath, extractDir string) error {
 	}
 }
 
+// extractAndRenameCBR handles CBR archives specifically
 func extractAndRenameCBR(cbrPath, extractDir string) error {
 	tempDir, err := os.MkdirTemp("", "cbr_extract")
 	if err != nil {
@@ -174,6 +181,7 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 	return nil
 }
 
+// extractAndRenameCBZ handles CBZ archives specifically
 func extractAndRenameCBZ(cbzPath, extractDir string) error {
 	if err := unzipCBZ(cbzPath, extractDir); err != nil {
 		return fmt.Errorf("failed to extract CBZ file: %w", err)
@@ -186,6 +194,7 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 	return nil
 }
 
+// copyDir copies a directory recursively
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -206,6 +215,7 @@ func copyDir(src, dst string) error {
 	})
 }
 
+// copyFile copies a single file
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -223,6 +233,7 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// extractTomeNumber extracts the volume/tome number from a filename
 func extractTomeNumber(filename string) string {
 	tomeRegex := regexp.MustCompile(`(?i)(?:tome|t)[.\s]*(\d+)`)
 	matches := tomeRegex.FindStringSubmatch(filename)
@@ -247,6 +258,7 @@ func extractTomeNumber(filename string) string {
 	return ""
 }
 
+// renameFile creates a new filename based on series name and tome number
 func renameFile(oldPath, seriesName string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(oldPath))
 	if ext != ".cbz" && ext != ".cbr" {
@@ -257,8 +269,7 @@ func renameFile(oldPath, seriesName string) (string, error) {
 	tomeNumber := extractTomeNumber(filename)
 
 	if tomeNumber == "" {
-		fmt.Printf("Unable to find tome number in %s\n", filename)
-		return oldPath, nil
+		return oldPath, fmt.Errorf("unable to find tome number in %s", filename)
 	}
 
 	newName := fmt.Sprintf("%s T%s%s", seriesName, tomeNumber, ".cbz")
@@ -268,11 +279,24 @@ func renameFile(oldPath, seriesName string) (string, error) {
 		return oldPath, nil
 	}
 
-	fmt.Printf("Rename: %s -> %s\n", oldPath, newPath)
 	return newPath, nil
 }
 
+var (
+	infoColor  = color.New(color.FgCyan).SprintFunc()
+	successColor = color.New(color.FgGreen).SprintFunc()
+	errorColor = color.New(color.FgRed).SprintFunc()
+)
+
+// logMessage prints a status message with proper formatting and colors
+func logMessage(mu *sync.Mutex, message string) {
+	mu.Lock()
+	defer mu.Unlock()
+	fmt.Printf("• %s\n", message)
+}
+
 func main() {
+	// Parse command line flags
 	seriesNamePtr := flag.String("name", "", "Name of the series to rename the files to")
 	flag.Parse()
 
@@ -286,12 +310,45 @@ func main() {
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		log.Fatalf("failed to read directory %s: %v", dir, err)
+		log.Fatalf("Failed to read directory %s: %v", dir, err)
 	}
 
-	var wg sync.WaitGroup
-
+	// Count the number of files to process
+	var cbFiles []os.DirEntry
 	for _, file := range files {
+		ext := strings.ToLower(filepath.Ext(file.Name()))
+		if ext == ".cbz" || ext == ".cbr" {
+			cbFiles = append(cbFiles, file)
+		}
+	}
+
+	if len(cbFiles) == 0 {
+		fmt.Println("No CBR/CBZ files found in the current directory.")
+		return
+	}
+
+	bar := progressbar.NewOptions(len(cbFiles),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetDescription("Processing comic archives"),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "=",
+			SaucerHead:    ">",
+			SaucerPadding: " ",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	fmt.Printf("Found %d comic archives to process.\n", len(cbFiles))
+	if seriesName != "" {
+		fmt.Printf("Series name set to: %s\n", seriesName)
+	}
+	fmt.Println("Starting processing...")
+
+	for _, file := range cbFiles {
 		ext := strings.ToLower(filepath.Ext(file.Name()))
 		if ext == ".cbz" || ext == ".cbr" {
 			wg.Add(1)
@@ -304,17 +361,19 @@ func main() {
 				newFilePath := filePath
 				var newCBZPath string
 
+				// Handle file renaming if series name is provided
 				if seriesName != "" {
 					var err error
 					newFilePath, err = renameFile(filePath, seriesName)
 					if err != nil {
-						fmt.Printf("Error renaming %s: %v\n", filePath, err)
+						logMessage(&mu, errorColor(fmt.Sprintf("Error with %s: %v", file.Name(), err)))
 						return
 					}
 
 					if newFilePath != filePath {
 						newExt := filepath.Ext(newFilePath)
 						extractDir = filepath.Join(dir, strings.TrimSuffix(filepath.Base(newFilePath), newExt)+"_extracted")
+						logMessage(&mu, infoColor(fmt.Sprintf("Renaming: %s → %s", filepath.Base(filePath), filepath.Base(newFilePath))))
 					}
 				}
 
@@ -324,56 +383,66 @@ func main() {
 					newCBZPath = newFilePath
 				}
 
-				fmt.Printf("Processing %s...\n", filePath)
+				logMessage(&mu, infoColor(fmt.Sprintf("Processing: %s", filepath.Base(filePath))))
 
 				if err := extractAndRenameArchive(filePath, extractDir); err != nil {
-					fmt.Printf("failed to extract and rename %s: %v\n", filePath, err)
+					logMessage(&mu, errorColor(fmt.Sprintf("Error extracting %s: %v", filepath.Base(filePath), err)))
 					return
 				}
 
 				if ext == ".cbr" {
-					fmt.Printf("Compressing files into %s...\n", newCBZPath)
+					logMessage(&mu, infoColor(fmt.Sprintf("Converting to CBZ: %s", filepath.Base(newCBZPath))))
+
 					if err := zipFiles(newCBZPath, extractDir); err != nil {
-						fmt.Printf("failed to zip files into %s: %v\n", newCBZPath, err)
+						logMessage(&mu, errorColor(fmt.Sprintf("Error creating CBZ for %s: %v", filepath.Base(filePath), err)))
 						return
 					}
 
-					fmt.Printf("Removing original CBR file...\n")
 					if err := os.Remove(filePath); err != nil {
-						fmt.Printf("failed to remove original CBR file %s: %v\n", filePath, err)
+						logMessage(&mu, errorColor(fmt.Sprintf("Error removing original %s: %v", filepath.Base(filePath), err)))
 					}
 
-					fmt.Printf("Successfully converted %s to %s\n", filePath, newCBZPath)
+					logMessage(&mu, successColor(fmt.Sprintf("Converted: %s → %s", filepath.Base(filePath), filepath.Base(newCBZPath))))
 				} else {
-					fmt.Printf("Updating original CBZ file %s...\n", filePath)
+					logMessage(&mu, infoColor(fmt.Sprintf("Updating CBZ: %s", filepath.Base(newFilePath))))
 
 					if newFilePath != filePath {
 						if err := zipFiles(newCBZPath, extractDir); err != nil {
-							fmt.Printf("failed to create new CBZ file %s: %v\n", newCBZPath, err)
+							logMessage(&mu, errorColor(fmt.Sprintf("Error creating new CBZ %s: %v", filepath.Base(newFilePath), err)))
 							return
 						}
 						if err := os.Remove(filePath); err != nil {
-							fmt.Printf("failed to remove original CBZ file %s: %v\n", filePath, err)
+							logMessage(&mu, errorColor(fmt.Sprintf("Error removing original %s: %v", filepath.Base(filePath), err)))
 						}
 					} else {
 						if err := os.Remove(filePath); err != nil {
-							fmt.Printf("failed to remove original CBZ file %s: %v\n", filePath, err)
+							logMessage(&mu, errorColor(fmt.Sprintf("Error removing original %s: %v", filepath.Base(filePath), err)))
 							return
 						}
 						if err := zipFiles(filePath, extractDir); err != nil {
-							fmt.Printf("failed to update CBZ file %s: %v\n", filePath, err)
+							logMessage(&mu, errorColor(fmt.Sprintf("Error updating CBZ %s: %v", filepath.Base(filePath), err)))
+							return
+						}
+						if err := zipFiles(filePath, extractDir); err != nil {
+							logMessage(&mu, errorColor(fmt.Sprintf("Error updating CBZ %s: %v", filepath.Base(filePath), err)))
 							return
 						}
 					}
 
-					fmt.Printf("Successfully updated %s\n", newCBZPath)
+					logMessage(&mu, successColor(fmt.Sprintf("Updated: %s", filepath.Base(newCBZPath))))
 				}
 
-				fmt.Printf("Cleaning up temporary files...\n")
 				os.RemoveAll(extractDir)
+				logMessage(&mu, successColor(fmt.Sprintf("✓ Completed: %s", filepath.Base(newCBZPath))))
+
+				mu.Lock()
+				bar.Add(1)
+				mu.Unlock()
 			}(file)
 		}
 	}
 
 	wg.Wait()
+	bar.Finish()
+	fmt.Println("\n✅ All files processed successfully!")
 }
