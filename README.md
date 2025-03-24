@@ -15,7 +15,7 @@
 
 ## 🛠️ Installation
 
-1. Ensure you have Go 1.18 or later installed on your system.
+1. Ensure you have Go 1.23 or later installed on your system.
 2. Clone this repository:
    ```
    git clone https://github.com/Romaixn/cbz-converter.git
