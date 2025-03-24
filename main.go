@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -222,7 +223,65 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+func extractTomeNumber(filename string) string {
+	tomeRegex := regexp.MustCompile(`(?i)(?:tome|t)[.\s]*(\d+)`)
+	matches := tomeRegex.FindStringSubmatch(filename)
+	if len(matches) > 1 {
+		num, err := strconv.Atoi(matches[1])
+		if err == nil {
+			return fmt.Sprintf("%02d", num)
+		}
+		return matches[1]
+	}
+
+	numRegex := regexp.MustCompile(`\d+`)
+	matches = numRegex.FindStringSubmatch(filename)
+	if len(matches) > 0 {
+		num, err := strconv.Atoi(matches[0])
+		if err == nil {
+			return fmt.Sprintf("%02d", num)
+		}
+		return matches[0]
+	}
+
+	return ""
+}
+
+func renameFile(oldPath, seriesName string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(oldPath))
+	if ext != ".cbz" && ext != ".cbr" {
+		return oldPath, nil
+	}
+
+	filename := filepath.Base(oldPath)
+	tomeNumber := extractTomeNumber(filename)
+
+	if tomeNumber == "" {
+		fmt.Printf("Unable to find tome number in %s\n", filename)
+		return oldPath, nil
+	}
+
+	newName := fmt.Sprintf("%s T%s%s", seriesName, tomeNumber, ".cbz")
+	newPath := filepath.Join(filepath.Dir(oldPath), newName)
+
+	if newPath == oldPath {
+		return oldPath, nil
+	}
+
+	fmt.Printf("Rename: %s -> %s\n", oldPath, newPath)
+	return newPath, nil
+}
+
 func main() {
+	seriesNamePtr := flag.String("name", "", "Name of the series to rename the files to")
+	flag.Parse()
+
+	seriesName := *seriesNamePtr
+
+	if seriesName == "" && flag.NArg() > 0 {
+		seriesName = strings.Join(flag.Args(), " ")
+	}
+
 	dir := "./"
 
 	files, err := os.ReadDir(dir)
@@ -241,11 +300,32 @@ func main() {
 
 				filePath := filepath.Join(dir, file.Name())
 				extractDir := filepath.Join(dir, strings.TrimSuffix(file.Name(), ext)+"_extracted")
-				newCBZPath := filepath.Join(dir, strings.TrimSuffix(file.Name(), ext)+".cbz")
+
+				newFilePath := filePath
+				var newCBZPath string
+
+				if seriesName != "" {
+					var err error
+					newFilePath, err = renameFile(filePath, seriesName)
+					if err != nil {
+						fmt.Printf("Error renaming %s: %v\n", filePath, err)
+						return
+					}
+
+					if newFilePath != filePath {
+						newExt := filepath.Ext(newFilePath)
+						extractDir = filepath.Join(dir, strings.TrimSuffix(filepath.Base(newFilePath), newExt)+"_extracted")
+					}
+				}
+
+				if ext == ".cbr" {
+					newCBZPath = strings.TrimSuffix(newFilePath, ext) + ".cbz"
+				} else {
+					newCBZPath = newFilePath
+				}
 
 				fmt.Printf("Processing %s...\n", filePath)
 
-				// Extract and rename for both CBR and CBZ
 				if err := extractAndRenameArchive(filePath, extractDir); err != nil {
 					fmt.Printf("failed to extract and rename %s: %v\n", filePath, err)
 					return
@@ -265,17 +345,28 @@ func main() {
 
 					fmt.Printf("Successfully converted %s to %s\n", filePath, newCBZPath)
 				} else {
-					// For CBZ, we just need to update the original file
 					fmt.Printf("Updating original CBZ file %s...\n", filePath)
-					if err := os.Remove(filePath); err != nil {
-						fmt.Printf("failed to remove original CBZ file %s: %v\n", filePath, err)
-						return
+
+					if newFilePath != filePath {
+						if err := zipFiles(newCBZPath, extractDir); err != nil {
+							fmt.Printf("failed to create new CBZ file %s: %v\n", newCBZPath, err)
+							return
+						}
+						if err := os.Remove(filePath); err != nil {
+							fmt.Printf("failed to remove original CBZ file %s: %v\n", filePath, err)
+						}
+					} else {
+						if err := os.Remove(filePath); err != nil {
+							fmt.Printf("failed to remove original CBZ file %s: %v\n", filePath, err)
+							return
+						}
+						if err := zipFiles(filePath, extractDir); err != nil {
+							fmt.Printf("failed to update CBZ file %s: %v\n", filePath, err)
+							return
+						}
 					}
-					if err := zipFiles(filePath, extractDir); err != nil {
-						fmt.Printf("failed to update CBZ file %s: %v\n", filePath, err)
-						return
-					}
-					fmt.Printf("Successfully updated %s\n", filePath)
+
+					fmt.Printf("Successfully updated %s\n", newCBZPath)
 				}
 
 				fmt.Printf("Cleaning up temporary files...\n")
