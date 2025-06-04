@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/fatih/color"
+	"github.com/nwaples/rardecode/v2"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -155,27 +155,53 @@ func extractAndRenameArchive(archivePath, extractDir string) error {
 
 // extractAndRenameCBR handles CBR archives specifically
 func extractAndRenameCBR(cbrPath, extractDir string) error {
-	tempDir, err := os.MkdirTemp("", "cbr_extract")
+	file, err := os.Open(cbrPath)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary directory: %w", err)
+		return fmt.Errorf("failed to open CBR file %s: %w", cbrPath, err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer file.Close()
 
-	cmd := exec.Command("unrar", "x", cbrPath, tempDir)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to extract CBR file: %w", err)
-	}
-
-	if err := renameFilesWithLeadingZeros(tempDir); err != nil {
-		return fmt.Errorf("failed to rename files: %w", err)
+	r, err := rardecode.NewReader(file, "")
+	if err != nil {
+		return fmt.Errorf("failed to create RAR reader for %s: %w", cbrPath, err)
 	}
 
 	if err := os.MkdirAll(extractDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create extract directory: %w", err)
 	}
 
-	if err := copyDir(tempDir, extractDir); err != nil {
-		return fmt.Errorf("failed to copy renamed files: %w", err)
+	for {
+		header, err := r.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read RAR entry: %w", err)
+		}
+
+		if header.IsDir {
+			continue
+		}
+
+		destPath := filepath.Join(extractDir, header.Name)
+		if err := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(destPath), err)
+		}
+
+		outFile, err := os.Create(destPath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %w", destPath, err)
+		}
+
+		_, err = io.Copy(outFile, r)
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("failed to extract file %s: %w", header.Name, err)
+		}
+	}
+
+	if err := renameFilesWithLeadingZeros(extractDir); err != nil {
+		return fmt.Errorf("failed to rename files: %w", err)
 	}
 
 	return nil
