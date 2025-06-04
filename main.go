@@ -183,18 +183,25 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 			continue
 		}
 
-		destPath := filepath.Join(extractDir, header.Name)
+		cleanName := filepath.Clean(header.Name)
+		relPath, err := filepath.Rel(extractDir, filepath.Join(extractDir, cleanName))
+		if err != nil || strings.HasPrefix(relPath, "..") {
+			log.Printf("skipping potentially unsafe file: %s", header.Name)
+			continue
+		}
+
+		destPath := filepath.Join(extractDir, relPath)
 		if err := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(destPath), err)
 		}
 
 		outFile, err := os.Create(destPath)
+		defer outFile.Close()
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %w", destPath, err)
 		}
 
 		_, err = io.Copy(outFile, r)
-		outFile.Close()
 		if err != nil {
 			return fmt.Errorf("failed to extract file %s: %w", header.Name, err)
 		}
