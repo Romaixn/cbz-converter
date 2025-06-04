@@ -13,22 +13,6 @@
 - 🧹 Automatic cleanup of temporary files
 - 📝 Automatic file renaming with consistent series naming
 
-## 🛠️ Installation
-
-1. Ensure you have Go 1.23 or later installed on your system.
-2. Clone this repository:
-   ```
-   git clone https://github.com/Romaixn/cbz-converter.git
-   ```
-3. Navigate to the project directory:
-   ```
-   cd cbz-converter
-   ```
-4. Build the project:
-   ```
-   go build -o cbz-converter
-   ```
-
 ## 🚀 Usage
 
 ### Basic Usage
