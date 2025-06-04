@@ -161,7 +161,7 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 	}
 	defer file.Close()
 
-	r, err := rardecode.NewReader(file, "")
+	r, err := rardecode.NewReader(file)
 	if err != nil {
 		return fmt.Errorf("failed to create RAR reader for %s: %w", cbrPath, err)
 	}
