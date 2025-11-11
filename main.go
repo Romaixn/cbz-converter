@@ -153,8 +153,10 @@ func extractAndRenameArchive(archivePath, extractDir string) error {
 		return extractAndRenameCBR(archivePath, extractDir)
 	case ".pdf":
 		return extractAndRenamePDF(archivePath, extractDir)
-	default:
+	case ".cbz":
 		return extractAndRenameCBZ(archivePath, extractDir)
+	default:
+		return fmt.Errorf("unsupported file type: %s", ext)
 	}
 }
 
