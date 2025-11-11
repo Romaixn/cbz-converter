@@ -7,6 +7,7 @@
 ## ✨ Features
 
 - 🔄 Converts CBR files to CBZ format
+- 📄 Converts PDF files to CBZ format
 - 🔢 Renames image files with leading zeros for proper sorting
 - 🗜️ Recompresses CBZ files for optimized storage
 - 🚀 Processes multiple files concurrently for speed
@@ -17,12 +18,12 @@
 
 ### Basic Usage
 
-1. Place the `cbz-converter` executable in the directory containing your CBR/CBZ files. You can find it [here](https://github.com/Romaixn/cbz-converter/releases/latest).
+1. Place the `cbz-converter` executable in the directory containing your CBR/CBZ/PDF files. You can find it [here](https://github.com/Romaixn/cbz-converter/releases/latest).
 2. Run the program:
    ```
    ./cbz-converter
    ```
-3. The tool will automatically process all CBR and CBZ files in the current directory.
+3. The tool will automatically process all CBR, CBZ, and PDF files in the current directory.
 
 ### Renaming Files
 
@@ -38,17 +39,18 @@ Or use positional arguments:
 ./cbz-converter "Series Name"
 ```
 
-This will rename all CBR/CBZ files to the format "Series Name T01.cbz", "Series Name T02.cbz", etc., based on the tome/volume number detected in the original filename.
+This will rename all CBR/CBZ/PDF files to the format "Series Name T01.cbz", "Series Name T02.cbz", etc., based on the tome/volume number detected in the original filename.
 
 ## 🎭 How It Works
 
-1. 📂 Scans the current directory for CBR and CBZ files
-2. 📤 Extracts the contents of each archive
+1. 📂 Scans the current directory for CBR, CBZ, and PDF files
+2. 📤 Extracts the contents of each archive or PDF
 3. 🔢 Renames image files with leading zeros (e.g., 1.jpg → 001.jpg)
 4. 📝 If a series name is provided, renames the files with a consistent naming pattern
 5. 🔄 For CBR files: Creates a new CBZ archive and deletes the original CBR
-6. 🗜️ For CBZ files: Recompresses the archive with the renamed files
-7. 🧹 Cleans up temporary extraction directories
+6. 📄 For PDF files: Extracts images, creates a CBZ archive, and deletes the original PDF
+7. 🗜️ For CBZ files: Recompresses the archive with the renamed files
+8. 🧹 Cleans up temporary extraction directories
 
 ## 🤝 Contributing
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/nwaples/rardecode/v2"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -144,11 +145,15 @@ func zipFiles(filename string, baseDir string) error {
 	return err
 }
 
-// extractAndRenameArchive handles both CBR and CBZ archives
+// extractAndRenameArchive handles CBR, CBZ, and PDF files
 func extractAndRenameArchive(archivePath, extractDir string) error {
-	if strings.HasSuffix(strings.ToLower(archivePath), ".cbr") {
+	ext := strings.ToLower(filepath.Ext(archivePath))
+	switch ext {
+	case ".cbr":
 		return extractAndRenameCBR(archivePath, extractDir)
-	} else {
+	case ".pdf":
+		return extractAndRenamePDF(archivePath, extractDir)
+	default:
 		return extractAndRenameCBZ(archivePath, extractDir)
 	}
 }
@@ -227,6 +232,25 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 	return nil
 }
 
+// extractAndRenamePDF handles PDF files by extracting images
+func extractAndRenamePDF(pdfPath, extractDir string) error {
+	if err := os.MkdirAll(extractDir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create extract directory: %w", err)
+	}
+
+	// Extract images from PDF to the extraction directory
+	if err := api.ExtractImagesFile(pdfPath, extractDir, nil, nil); err != nil {
+		return fmt.Errorf("failed to extract images from PDF %s: %w", pdfPath, err)
+	}
+
+	// Rename extracted files with leading zeros for consistent sorting
+	if err := renameFilesWithLeadingZeros(extractDir); err != nil {
+		return fmt.Errorf("failed to rename files: %w", err)
+	}
+
+	return nil
+}
+
 // copyDir copies a directory recursively
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
@@ -294,7 +318,7 @@ func extractTomeNumber(filename string) string {
 // renameFile creates a new filename based on series name and tome number
 func renameFile(oldPath, seriesName string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(oldPath))
-	if ext != ".cbz" && ext != ".cbr" {
+	if ext != ".cbz" && ext != ".cbr" && ext != ".pdf" {
 		return oldPath, nil
 	}
 
@@ -350,13 +374,13 @@ func main() {
 	var cbFiles []os.DirEntry
 	for _, file := range files {
 		ext := strings.ToLower(filepath.Ext(file.Name()))
-		if ext == ".cbz" || ext == ".cbr" {
+		if ext == ".cbz" || ext == ".cbr" || ext == ".pdf" {
 			cbFiles = append(cbFiles, file)
 		}
 	}
 
 	if len(cbFiles) == 0 {
-		fmt.Println("No CBR/CBZ files found in the current directory.")
+		fmt.Println("No CBR/CBZ/PDF files found in the current directory.")
 		return
 	}
 
@@ -383,7 +407,7 @@ func main() {
 
 	for _, file := range cbFiles {
 		ext := strings.ToLower(filepath.Ext(file.Name()))
-		if ext == ".cbz" || ext == ".cbr" {
+		if ext == ".cbz" || ext == ".cbr" || ext == ".pdf" {
 			wg.Add(1)
 			go func(file os.DirEntry) {
 				defer wg.Done()
@@ -410,7 +434,7 @@ func main() {
 					}
 				}
 
-				if ext == ".cbr" {
+				if ext == ".cbr" || ext == ".pdf" {
 					newCBZPath = strings.TrimSuffix(newFilePath, ext) + ".cbz"
 				} else {
 					newCBZPath = newFilePath
@@ -423,7 +447,7 @@ func main() {
 					return
 				}
 
-				if ext == ".cbr" {
+				if ext == ".cbr" || ext == ".pdf" {
 					logMessage(&mu, infoColor(fmt.Sprintf("Converting to CBZ: %s", filepath.Base(newCBZPath))))
 
 					if err := zipFiles(newCBZPath, extractDir); err != nil {
