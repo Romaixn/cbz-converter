@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,6 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
-// unzipCBZ extracts a CBZ file to a destination directory
 func unzipCBZ(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -59,7 +59,6 @@ func unzipCBZ(src, dest string) error {
 	return nil
 }
 
-// renameFilesWithLeadingZeros adds leading zeros to numeric parts of filenames
 func renameFilesWithLeadingZeros(dir string) error {
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -100,7 +99,6 @@ func renameFilesWithLeadingZeros(dir string) error {
 	return err
 }
 
-// zipFiles compresses files from a directory into a zip file
 func zipFiles(filename string, baseDir string) error {
 	newZipFile, err := os.Create(filename)
 	if err != nil {
@@ -145,7 +143,6 @@ func zipFiles(filename string, baseDir string) error {
 	return err
 }
 
-// extractAndRenameArchive handles CBR, CBZ, and PDF files
 func extractAndRenameArchive(archivePath, extractDir string) error {
 	ext := strings.ToLower(filepath.Ext(archivePath))
 	switch ext {
@@ -160,7 +157,6 @@ func extractAndRenameArchive(archivePath, extractDir string) error {
 	}
 }
 
-// extractAndRenameCBR handles CBR archives specifically
 func extractAndRenameCBR(cbrPath, extractDir string) error {
 	file, err := os.Open(cbrPath)
 	if err != nil {
@@ -221,22 +217,22 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 	return nil
 }
 
-// extractAndRenameCBZ handles CBZ archives specifically
-// Includes fallback for misnamed RAR files with .cbz extension
+// Fallback to RAR extraction if .cbz file is actually a misnamed .cbr
 func extractAndRenameCBZ(cbzPath, extractDir string) error {
-	// Try ZIP extraction first
 	err := unzipCBZ(cbzPath, extractDir)
 	if err != nil {
-		// If ZIP extraction fails, check if it's actually a RAR file
-		if strings.Contains(err.Error(), "not a valid zip file") || strings.Contains(err.Error(), "zip: unsupported") {
+		if errors.Is(err, zip.ErrFormat) {
 			log.Printf("ZIP extraction failed for %s, attempting RAR extraction (file may be misnamed .cbr as .cbz)", filepath.Base(cbzPath))
 
-			// Try RAR extraction as fallback
 			file, rarErr := os.Open(cbzPath)
 			if rarErr != nil {
 				return fmt.Errorf("failed to extract CBZ file: %w (also failed to open for RAR attempt: %v)", err, rarErr)
 			}
-			defer file.Close()
+			defer func() {
+				if closeErr := file.Close(); closeErr != nil {
+					log.Printf("error closing file %s: %v", cbzPath, closeErr)
+				}
+			}()
 
 			r, rarErr := rardecode.NewReader(file)
 			if rarErr != nil {
@@ -261,13 +257,26 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 				}
 
 				cleanName := filepath.Clean(header.Name)
-				relPath, rarErr := filepath.Rel(extractDir, filepath.Join(extractDir, cleanName))
-				if rarErr != nil || strings.HasPrefix(relPath, "..") {
+
+				// Path traversal protection
+				if filepath.IsAbs(cleanName) {
+					log.Printf("skipping potentially unsafe absolute path: %s", header.Name)
+					continue
+				}
+				parts := strings.Split(cleanName, string(os.PathSeparator))
+				unsafePath := false
+				for _, part := range parts {
+					if part == ".." {
+						unsafePath = true
+						break
+					}
+				}
+				if unsafePath {
 					log.Printf("skipping potentially unsafe file: %s", header.Name)
 					continue
 				}
 
-				destPath := filepath.Join(extractDir, relPath)
+				destPath := filepath.Join(extractDir, cleanName)
 				if rarErr := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); rarErr != nil {
 					return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(destPath), rarErr)
 				}
@@ -278,7 +287,9 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 				}
 
 				_, rarErr = io.Copy(outFile, r)
-				outFile.Close()
+				if closeErr := outFile.Close(); closeErr != nil {
+					return fmt.Errorf("failed to close file %s: %w", destPath, closeErr)
+				}
 				if rarErr != nil {
 					return fmt.Errorf("failed to extract file %s: %w", header.Name, rarErr)
 				}
@@ -297,18 +308,15 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 	return nil
 }
 
-// extractAndRenamePDF handles PDF files by extracting images
 func extractAndRenamePDF(pdfPath, extractDir string) error {
 	if err := os.MkdirAll(extractDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create extract directory: %w", err)
 	}
 
-	// Extract images from PDF to the extraction directory
 	if err := api.ExtractImagesFile(pdfPath, extractDir, nil, nil); err != nil {
 		return fmt.Errorf("failed to extract images from PDF %s: %w", pdfPath, err)
 	}
 
-	// Rename extracted files with leading zeros for consistent sorting
 	if err := renameFilesWithLeadingZeros(extractDir); err != nil {
 		return fmt.Errorf("failed to rename files: %w", err)
 	}
@@ -316,7 +324,6 @@ func extractAndRenamePDF(pdfPath, extractDir string) error {
 	return nil
 }
 
-// copyDir copies a directory recursively
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -337,7 +344,6 @@ func copyDir(src, dst string) error {
 	})
 }
 
-// copyFile copies a single file
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -355,7 +361,6 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// extractTomeNumber extracts the volume/tome number from a filename
 func extractTomeNumber(filename string) string {
 	tomeRegex := regexp.MustCompile(`(?i)(?:tome|t)[.\s]*(\d+)`)
 	matches := tomeRegex.FindStringSubmatch(filename)
@@ -380,7 +385,6 @@ func extractTomeNumber(filename string) string {
 	return ""
 }
 
-// renameFile creates a new filename based on series name and tome number
 func renameFile(oldPath, seriesName string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(oldPath))
 	if ext != ".cbz" && ext != ".cbr" && ext != ".pdf" {
@@ -410,7 +414,6 @@ var (
 	errorColor = color.New(color.FgRed).SprintFunc()
 )
 
-// logMessage prints a status message with proper formatting and colors
 func logMessage(mu *sync.Mutex, message string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -418,7 +421,6 @@ func logMessage(mu *sync.Mutex, message string) {
 }
 
 func main() {
-	// Parse command line flags
 	seriesNamePtr := flag.String("name", "", "Name of the series to rename the files to")
 	flag.Parse()
 
@@ -435,7 +437,6 @@ func main() {
 		log.Fatalf("Failed to read directory %s: %v", dir, err)
 	}
 
-	// Count the number of files to process
 	var cbFiles []os.DirEntry
 	for _, file := range files {
 		ext := strings.ToLower(filepath.Ext(file.Name()))
@@ -483,7 +484,6 @@ func main() {
 				newFilePath := filePath
 				var newCBZPath string
 
-				// Handle file renaming if series name is provided
 				if seriesName != "" {
 					var err error
 					newFilePath, err = renameFile(filePath, seriesName)
