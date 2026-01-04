@@ -217,7 +217,7 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 	return nil
 }
 
-// Fallback to RAR extraction if .cbz file is actually a misnamed .cbr
+// extractAndRenameCBZ extracts images from a CBZ archive into extractDir, with fallback to RAR extraction if the .cbz file is actually a misnamed .cbr.
 func extractAndRenameCBZ(cbzPath, extractDir string) error {
 	err := unzipCBZ(cbzPath, extractDir)
 	if err != nil {
