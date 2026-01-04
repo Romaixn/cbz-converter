@@ -287,11 +287,14 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 				}
 
 				_, rarErr = io.Copy(outFile, r)
+				if rarErr != nil {
+					// best-effort close; preserve the primary copy error
+					_ = outFile.Close()
+					return fmt.Errorf("failed to extract file %s: %w", header.Name, rarErr)
+				}
+
 				if closeErr := outFile.Close(); closeErr != nil {
 					return fmt.Errorf("failed to close file %s: %w", destPath, closeErr)
-				}
-				if rarErr != nil {
-					return fmt.Errorf("failed to extract file %s: %w", header.Name, rarErr)
 				}
 			}
 
