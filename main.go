@@ -222,9 +222,72 @@ func extractAndRenameCBR(cbrPath, extractDir string) error {
 }
 
 // extractAndRenameCBZ handles CBZ archives specifically
+// Includes fallback for misnamed RAR files with .cbz extension
 func extractAndRenameCBZ(cbzPath, extractDir string) error {
-	if err := unzipCBZ(cbzPath, extractDir); err != nil {
-		return fmt.Errorf("failed to extract CBZ file: %w", err)
+	// Try ZIP extraction first
+	err := unzipCBZ(cbzPath, extractDir)
+	if err != nil {
+		// If ZIP extraction fails, check if it's actually a RAR file
+		if strings.Contains(err.Error(), "not a valid zip file") || strings.Contains(err.Error(), "zip: unsupported") {
+			log.Printf("ZIP extraction failed for %s, attempting RAR extraction (file may be misnamed .cbr as .cbz)", filepath.Base(cbzPath))
+
+			// Try RAR extraction as fallback
+			file, rarErr := os.Open(cbzPath)
+			if rarErr != nil {
+				return fmt.Errorf("failed to extract CBZ file: %w (also failed to open for RAR attempt: %v)", err, rarErr)
+			}
+			defer file.Close()
+
+			r, rarErr := rardecode.NewReader(file)
+			if rarErr != nil {
+				return fmt.Errorf("failed to extract as ZIP or RAR: ZIP error: %w, RAR error: %v", err, rarErr)
+			}
+
+			if rarErr := os.MkdirAll(extractDir, os.ModePerm); rarErr != nil {
+				return fmt.Errorf("failed to create extract directory: %w", rarErr)
+			}
+
+			for {
+				header, rarErr := r.Next()
+				if rarErr == io.EOF {
+					break
+				}
+				if rarErr != nil {
+					return fmt.Errorf("failed to read RAR entry: %w", rarErr)
+				}
+
+				if header.IsDir {
+					continue
+				}
+
+				cleanName := filepath.Clean(header.Name)
+				relPath, rarErr := filepath.Rel(extractDir, filepath.Join(extractDir, cleanName))
+				if rarErr != nil || strings.HasPrefix(relPath, "..") {
+					log.Printf("skipping potentially unsafe file: %s", header.Name)
+					continue
+				}
+
+				destPath := filepath.Join(extractDir, relPath)
+				if rarErr := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); rarErr != nil {
+					return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(destPath), rarErr)
+				}
+
+				outFile, rarErr := os.Create(destPath)
+				if rarErr != nil {
+					return fmt.Errorf("failed to create file %s: %w", destPath, rarErr)
+				}
+
+				_, rarErr = io.Copy(outFile, r)
+				outFile.Close()
+				if rarErr != nil {
+					return fmt.Errorf("failed to extract file %s: %w", header.Name, rarErr)
+				}
+			}
+
+			log.Printf("Successfully extracted %s as RAR format (misnamed file)", filepath.Base(cbzPath))
+		} else {
+			return fmt.Errorf("failed to extract CBZ file: %w", err)
+		}
 	}
 
 	if err := renameFilesWithLeadingZeros(extractDir); err != nil {
