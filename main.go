@@ -263,20 +263,12 @@ func extractAndRenameCBZ(cbzPath, extractDir string) error {
 					log.Printf("skipping potentially unsafe absolute path: %s", header.Name)
 					continue
 				}
-				parts := strings.Split(cleanName, string(os.PathSeparator))
-				unsafePath := false
-				for _, part := range parts {
-					if part == ".." {
-						unsafePath = true
-						break
-					}
-				}
-				if unsafePath {
+
+				destPath := filepath.Join(extractDir, cleanName)
+				if !strings.HasPrefix(destPath, extractDir+string(os.PathSeparator)) && destPath != extractDir {
 					log.Printf("skipping potentially unsafe file: %s", header.Name)
 					continue
 				}
-
-				destPath := filepath.Join(extractDir, cleanName)
 				if rarErr := os.MkdirAll(filepath.Dir(destPath), os.ModePerm); rarErr != nil {
 					return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(destPath), rarErr)
 				}
